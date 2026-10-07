@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/png" href="/wakawaka-demo/waka-icon.png">
+  <title>wakawaka</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100vw; height: 100vh; overflow: hidden; background: oklch(15% 0.01 200); }
+    #app { width: 100vw; height: 100vh; display: block; }
+    #overlay {
+      position: fixed; top: 48px; right: 8px;
+      width: 44ch;
+      background: oklch(20% 0.01 200 / 0.78);
+      color: oklch(92% 0.03 170);
+      font: 9px/1.3 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      padding: 4px 6px;
+      border-radius: 4px;
+      pointer-events: none;
+      user-select: none;
+      white-space: pre;
+      overflow: hidden;
+    }
+    #rec-indicator {
+      position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: oklch(15% 0.01 200 / 0.72);
+      color: oklch(95% 0.05 25);
+      font: 600 13px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      letter-spacing: 0.12em;
+      border-radius: 4px;
+      pointer-events: none;
+      user-select: none;
+      z-index: 50;
+    }
+    #rec-indicator.on { display: inline-flex; }
+    #rec-indicator .dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: oklch(60% 0.22 25);
+      animation: recPulse 1s ease-in-out infinite;
+    }
+    @keyframes recPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.25; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #rec-indicator .dot { animation: none; }
+    }
+    /* Saved confirmation: green, steady (no pulse) — mirrors the REC pill. */
+    #rec-indicator.saved { color: oklch(92% 0.13 155); }
+    #rec-indicator.saved .dot { background: oklch(68% 0.18 155); animation: none; }
+    #log-toast {
+      position: fixed; top: 50px; left: 50%; transform: translateX(-50%);
+      padding: 6px 12px;
+      background: oklch(15% 0.01 200 / 0.78);
+      color: oklch(92% 0.06 170);
+      font: 12px/1.3 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      border-radius: 4px;
+      pointer-events: none;
+      user-select: none;
+      opacity: 0;
+      transition: opacity 0.2s ease-out;
+      z-index: 50;
+    }
+    #log-toast.show { opacity: 1; }
+    /* Boot gate: covers everything (including the runtime panel) until the world is playable.
+       Building `ciudad` takes seconds — without this the page looks hung. The spinner animates
+       `transform`, which the compositor can keep running even while the main thread is blocked
+       building the world. */
+    #boot {
+      position: fixed; inset: 0;
+      z-index: 1000;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 18px;
+      background: oklch(15% 0.01 200);
+      color: oklch(92% 0.03 170);
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      user-select: none;
+      transition: opacity 0.25s ease-out;
+    }
+    #boot.done { opacity: 0; pointer-events: none; }
+    #boot .spinner {
+      width: 42px; height: 42px;
+      border: 3px solid oklch(92% 0.03 170 / 0.18);
+      border-top-color: oklch(80% 0.14 170);
+      border-radius: 50%;
+      will-change: transform;
+      animation: bootSpin 0.9s linear infinite;
+    }
+    @keyframes bootSpin { to { transform: rotate(360deg); } }
+    #boot .title {
+      font-size: 15px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+      color: oklch(96% 0.03 170);
+    }
+    #boot .phase { color: oklch(75% 0.03 170); min-height: 1.5em; }
+    #boot .bar {
+      width: 260px; height: 3px; border-radius: 2px;
+      background: oklch(92% 0.03 170 / 0.14);
+      overflow: hidden;
+    }
+    #boot .bar > i {
+      display: block; height: 100%; width: 0;
+      background: oklch(80% 0.14 170);
+      transition: width 0.15s linear;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #boot .spinner { animation-duration: 3s; }
+    }
+
+    #hud {
+      position: fixed; top: 12px; left: 12px;
+      color: oklch(96% 0.03 170);
+      font: 600 32px/1.1 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-variant-numeric: tabular-nums;
+      text-shadow: 0 2px 6px oklch(15% 0.01 200 / 0.85);
+      pointer-events: none;
+      user-select: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    #hud .label {
+      font-size: 14px;
+      font-weight: 400;
+      color: oklch(72% 0.02 170 / 0.85);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    #hud .sub {
+      font-size: 13px;
+      font-weight: 400;
+      color: oklch(74% 0.02 170 / 0.85);
+      font-variant-numeric: tabular-nums;
+    }
+    #hud .row { display: flex; flex-direction: column; gap: 1px; }
+    #hud .sandbox {
+      font-size: 15px;
+      font-weight: 600;
+      color: oklch(86% 0.09 170);
+      letter-spacing: 0.02em;
+      margin-bottom: 2px;
+    }
+    #hint {
+      position: fixed; bottom: 8px; left: 8px;
+      color: oklch(70% 0.02 170 / 0.65);
+      font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      pointer-events: none;
+      user-select: none;
+    }
+    /* Top-right collapsible runtime settings panel (RuntimePanel.ts). Built in TS;
+       styled here with the same oklch palette / monospace as the HUD + overlay. */
+    #runtime-panel {
+      position: fixed; top: 8px; right: 8px; z-index: 60;
+      display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+      font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      color: oklch(92% 0.03 170);
+      user-select: none;
+    }
+    .rp-head {
+      cursor: pointer; font: inherit; font-size: 13px; font-weight: 600; letter-spacing: 0.04em;
+      background: oklch(20% 0.01 200 / 0.82);
+      color: oklch(86% 0.09 170);
+      border: 1px solid oklch(40% 0.03 200 / 0.6);
+      border-radius: 5px; padding: 8px 12px;
+    }
+    .rp-head { display: flex; align-items: center; gap: 12px; }
+    .rp-chevron { width: 7px; height: 7px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); margin-top: -4px; }
+    .rp-head[aria-expanded="true"] .rp-chevron { transform: rotate(225deg); margin-top: 4px; }
+    .rp-gallery { display: block; color: oklch(86% 0.09 170); padding-bottom: 12px; border-bottom: 1px solid oklch(34% 0.02 200 / 0.5); text-decoration: none; font-size: 12px; }
+    .rp-gallery:hover { text-decoration: underline; }
+    .rp-head:hover { background: oklch(26% 0.02 200 / 0.9); }
+    .rp-body {
+      display: none; width: min(280px, calc(100vw - 16px));
+      flex-direction: column; gap: 16px; padding: 12px;
+      background: oklch(18% 0.01 200 / 0.96);
+      border: 1px solid oklch(38% 0.03 200 / 0.6); border-radius: 5px;
+      box-shadow: 0 8px 24px oklch(10% 0.01 200 / 0.5);
+      /* The flag list grows; cap the panel to the viewport and scroll inside it. */
+      max-height: calc(100vh - 56px); overflow-y: auto;
+    }
+    #runtime-panel.open .rp-body { display: flex; }
+    .rp-fields { display: flex; flex-direction: column; gap: 12px; }
+    .rp-field { display: flex; flex-direction: column; gap: 4px; }
+    .rp-label { color: oklch(82% 0.02 170); font-weight: 600; letter-spacing: 0.02em; }
+    .rp-help { color: oklch(62% 0.02 170 / 0.85); font-size: 10px; line-height: 1.3; }
+    .rp-radio-group { display: flex; flex-direction: column; gap: 6px; }
+    .rp-radio, .rp-toggle-row { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+    .rp-select {
+      background: oklch(24% 0.01 200); color: oklch(92% 0.03 170);
+      border: 1px solid oklch(40% 0.03 200 / 0.7); border-radius: 3px;
+      padding: 2px 4px; font: inherit;
+    }
+    #runtime-panel input[type="radio"], #runtime-panel input[type="checkbox"] {
+      accent-color: oklch(66% 0.12 170); cursor: pointer; margin: 0;
+    }
+    .rp-hotkeys {
+      display: flex; flex-direction: column; gap: 4px;
+      border-top: 1px solid oklch(34% 0.02 200 / 0.5); padding-top: 12px;
+    }
+    .rp-section-title {
+      color: oklch(66% 0.02 170 / 0.8); text-transform: uppercase;
+      letter-spacing: 0.08em; font-size: 9px; margin-bottom: 2px;
+    }
+    .rp-key-row { display: flex; gap: 8px; align-items: baseline; color: oklch(74% 0.02 170 / 0.9); }
+    .rp-kbd {
+      background: oklch(28% 0.01 200); border: 1px solid oklch(42% 0.02 200 / 0.7);
+      border-radius: 3px; padding: 0 4px; min-width: 16px; text-align: center;
+      color: oklch(88% 0.04 170); font-size: 10px;
+    }
+    .rp-actions { display: flex; gap: 8px; }
+    .rp-save, .rp-reset { cursor: pointer; font: inherit; border-radius: 3px; padding: 4px 8px; border: 1px solid transparent; }
+    .rp-save { flex: 1; background: oklch(58% 0.12 170); color: oklch(18% 0.02 200); font-weight: 700; }
+    .rp-save:hover { background: oklch(64% 0.13 170); }
+    .rp-reset { background: oklch(26% 0.01 200 / 0.9); color: oklch(82% 0.02 170); border-color: oklch(40% 0.03 200 / 0.6); }
+    .rp-reset:hover { background: oklch(32% 0.02 200 / 0.95); }
+    .rp-note { color: oklch(58% 0.02 170 / 0.75); font-size: 9px; line-height: 1.3; }
+  </style>
+  <script type="module" crossorigin src="/wakawaka-demo/assets/main-BkhfWZJ8.js"></script>
+  <link rel="modulepreload" crossorigin href="/wakawaka-demo/assets/ConvexGeometry-DTnE0o2H.js">
+  <link rel="stylesheet" crossorigin href="/wakawaka-demo/assets/ConvexGeometry-Cd90VL-s.css">
+</head>
+<body>
+  <div id="app"></div>
+  <div id="boot" role="status" aria-live="polite">
+    <div class="spinner" aria-hidden="true"></div>
+    <div class="title">wakawaka</div>
+    <div class="phase" id="boot-phase">Starting…</div>
+    <div class="bar" aria-hidden="true"><i id="boot-bar"></i></div>
+  </div>
+  <div id="hud" aria-live="polite">
+    <div class="sandbox" id="hud-sandbox">--</div>
+    <div class="row">
+      <div class="label">FPS</div>
+      <div id="hud-fps">--</div>
+      <div class="sub" id="hud-perf">--</div>
+      <div class="sub" id="hud-inst">--</div>
+    </div>
+    <div class="row">
+      <div class="label">Size</div>
+      <div id="hud-size">--</div>
+      <div class="sub" id="hud-cap">--</div>
+    </div>
+  </div>
+  <div id="overlay">loading</div>
+  <div id="rec-indicator" role="status" aria-live="polite">
+    <span class="dot" aria-hidden="true"></span>
+    <span id="rec-label">RECORDING</span>
+  </div>
+  <div id="log-toast" role="status" aria-live="polite"></div>
+  <div id="hint">WASD move &nbsp; Space jump &nbsp; Shift dash &nbsp; K/P orbit &nbsp; O/L pitch &nbsp; 2 sandbox &nbsp; R next district &nbsp; 9 debug mode &nbsp; 1 record/save log &nbsp; 0 speed 1/4/8x</div>
+</body>
+</html>
